@@ -313,15 +313,13 @@ return function (App $app) {
                     ])) {
                         return $response->withJson(["code" => 200, "msg" => "Update email berhasil!"]);
                     }
-                } else if ($timeParam <= 0) {
+                } else {
                     if ($stmtUpdate->execute([
                         ':id' => $id, ':email' => $email,
                         ':pass' => $password, ':waktu' => $timeUpdate
                     ])) {
                         return $response->withJson(["code" => 200, "msg" => "Update email berhasil!"]);
                     }
-                } else if ($timeParam > 0) {
-                    return $response->withJson(["code" => 201, "msg" => "Email dan nomor telepon hanya bisa diganti 2 hari sekali!"]);
                 }
                 return $response->withJson(["code" => 201, "msg" => "Parameter salah!"]);
             }
@@ -382,15 +380,13 @@ return function (App $app) {
                     ])) {
                         return $response->withJson(["code" => 200, "msg" => "Update telepon berhasil!"]);
                     }
-                } else if ($timeParam <= 0) {
+                } else {
                     if ($stmtUpdate->execute([
                         ':id' => $id, ':telepon' => $telepon,
                         ':pass' => $password, ':waktu' => $timeUpdate
                     ])) {
                         return $response->withJson(["code" => 200, "msg" => "Update telepon berhasil!"]);
                     }
-                } else if ($timeParam > 0) {
-                    return $response->withJson(["code" => 201, "msg" => "Email dan nomor telepon hanya bisa diganti 2 hari sekali!"]);
                 }
                 return $response->withJson(["code" => 201, "msg" => "Parameter salah!"]);
             }
@@ -509,7 +505,7 @@ return function (App $app) {
         }
 
         $queryCheck = "SELECT * FROM tb_user WHERE `user_id` = :id AND token_login = :token ";
-        $querySelect = "SELECT * FROM tb_mobil WHERE jenis = :tipe AND alamat_id = :alamat AND nama LIKE '%$nama%' ORDER BY `status` DESC";
+        $querySelect = "SELECT * FROM tb_mobil WHERE jenis = :tipe AND alamat_id = :alamat AND nama LIKE '%$nama%' ORDER BY `status` ASC";
 
         $stmt = $this->db->prepare($queryCheck);
         if ($stmt->execute([':id' => $id, ':token' => $token])) {
@@ -584,19 +580,30 @@ return function (App $app) {
 
 
         $queryCheck = "SELECT * FROM tb_user WHERE `user_id` = :id AND token_login = :token ";
-        $queryMobil = "SELECT `status` FROM tb_mobil WHERE mobil_id = :m_id";
+        $queryMobil = "SELECT `status`, mobil_id FROM tb_mobil WHERE mobil_id = :m_id AND `status` = '1'";
         $queryUpdateMobil = "UPDATE tb_mobil SET `status` = '1' WHERE mobil_id = :mobil_id";
-        $queryInsert = "INSERT INTO tb_order (`user_id`, `mobil_id`, `metode_pembayaran`, `jenis_order`, `harga`, `order_date`, `start_date`, `end_date`) VALUES
-        (:u_id, :mobil_id, :metode, :jenis, :harga, :o_date, :s_date, :e_date)";
+        $queryCheckTrans = "SELECT `status`, `user_id` FROM tb_transaksi WHERE `user_id` = :id AND `status` = '0'";
+        $queryInsertTrans = "INSERT INTO tb_transaksi (`order_id`, `user_id`, metode_pembayaran, `harga`, `create_date`) VALUES (:o_id, :u_id, :metode, :harga, :create_date)";
+        $queryInsert = "INSERT INTO tb_order (`user_id`, `mobil_id`, `jenis_order`, `order_date`, `start_date`, `end_date`) VALUES
+        (:u_id, :mobil_id, :jenis, :o_date, :s_date, :e_date)";
+        $querySelectOrder = "SELECT `user_id`, max(order_id) AS id FROM tb_order WHERE `user_id` = :u_id";
 
-        $stmt = $this->db->prepare($queryMobil);
-        if ($stmt->execute([':m_id' => $mobil_id])) {
-            $result = $stmt->fetch();
-            $rowStatus = $result['status'];
-            if ($rowStatus === '1') {
+        $stmt1 = $this->db->prepare($queryMobil);
+        if ($stmt1->execute([':m_id' => $mobil_id])) {
+            $result = $stmt1->fetch();
+            if ($result) {
                 return $response->withJson(["code" => 201, "msg" => "Mobil sedang dipakai!"]);
             }
         }
+
+        $stmt2 = $this->db->prepare($queryCheckTrans);
+        if ($stmt2->execute([':id' => $id])) {
+            $result = $stmt2->fetch();
+            if ($result) {
+                return $response->withJson(["code" => 201, "msg" => "Ada pembayaran yang belum lunas!"]);
+            }
+        }
+
 
 
         $stmt = $this->db->prepare($queryCheck);
@@ -604,18 +611,83 @@ return function (App $app) {
             $result = $stmt->fetch();
             if ($result) {
                 $stmt = $this->db->prepare($queryInsert);
-                if ($stmt->execute([':u_id' => $id, ':mobil_id' => $mobil_id, ':metode' => $metodePembayaran, ':jenis' => $jenisOrder, ':harga' => $harga, ':o_date' => $thisdate, ':s_date' => $startDate, ':e_date' => $endDate])) {
+                if ($stmt->execute([':u_id' => $id, ':mobil_id' => $mobil_id, ':jenis' => $jenisOrder, ':o_date' => $thisdate, ':s_date' => $startDate, ':e_date' => $endDate])) {
                     $stmt = $this->db->prepare($queryUpdateMobil);
                     if ($stmt->execute([':mobil_id' => $mobil_id])) {
-                        return $response->withJson(["code" => 200, "msg" => "Berhasil dipesan!"]);
+                        $stmt = $this->db->prepare($querySelectOrder);
+                        if ($stmt->execute([':u_id' => $id])) {
+                            $result = $stmt->fetch();
+                            $order_id = $result['id'];
+                            if ($result) {
+                                $stmt = $this->db->prepare($queryInsertTrans);
+                                if ($stmt->execute([':o_id' => $order_id, ':u_id' => $id, ':metode' => $metodePembayaran, ':harga' => $harga, ':create_date' => $thisdate])) {
+                                    return $response->withJson(["code" => 200, "msg" => "Berhasil dipesan!"]);
+                                }
+                                return $response->withJson(["code" => 200, "msg" => "Insert transaksi!"]);
+                            }
+                            return $response->withJson(["code" => 200, "msg" => "Gagal mendapatkan id order!"]);
+                        }
+                        return $response->withJson(["code" => 200, "msg" => "Gagal update status mobil!"]);
                     }
-                    return $response->withJson(["code" => 201, "msg" => "Mobil sedang dipakai!"]);
+                    return $response->withJson(["code" => 201, "msg" => "Gagal update status mobil!"]);
                 }
-                return $response->withJson(["code" => 201, "msg" => "Mobil sedang dipakai!"]);
+                return $response->withJson(["code" => 201, "msg" => "Gagal insert order!"]);
             }
-            return $response->withJson(["code" => 201, "msg" => "Mobil sedang dipakai!"]);
+            return $response->withJson(["code" => 201, "msg" => "Token tidak berlaku!"]);
         }
-        return $response->withJson(["code" => 201, "msg" => "Mobil sedang dipakai!"]);
+        return $response->withJson(["code" => 201, "msg" => "Token tidak berlaku!"]);
+    });
+
+
+    $app->post('/user/cancel_order', function ($request, $response) {
+        $id = $request->getParsedBodyParam('id');
+        $token = $request->getParsedBodyParam('token');
+        $id_order = $request->getParsedBodyParam('order_id');
+
+
+        $queryCheck = "SELECT * FROM tb_user WHERE `user_id` = :id AND token_login = :token ";
+        $querySelect = "SELECT
+                        tb_order.order_id,
+                        tb_order.`status`,
+                        tb_mobil.`status`,
+                        tb_transaksi.`status`
+                        FROM
+                        tb_order
+                        INNER JOIN tb_mobil ON tb_order.mobil_id = tb_mobil.mobil_id
+                        INNER JOIN tb_transaksi ON tb_order.order_id = tb_transaksi.order_id
+                        WHERE tb_order.order_id = :order_id AND  tb_transaksi.`status` = '0' AND  tb_mobil.`status` = '1' AND  tb_order.`status` = '0' ";
+
+        $queryUpdate = "UPDATE
+                        tb_order
+                        INNER JOIN tb_mobil ON tb_order.mobil_id = tb_mobil.mobil_id
+                        INNER JOIN tb_transaksi ON tb_order.order_id = tb_transaksi.order_id
+                        SET
+                        tb_order.`status` = '3',
+                        tb_mobil.`status` = '0',
+                        tb_transaksi.`status` = '2'
+                        WHERE tb_order.order_id = :order_id ";
+
+        $stmt = $this->db->prepare($queryCheck);
+        if ($stmt->execute([':id' => $id, ':token' => $token])) {
+            $result = $stmt->fetch();
+            if ($result) {
+                $stmt = $this->db->prepare($querySelect);
+                if ($stmt->execute([':order_id' => $id_order])) {
+                    $result = $stmt->fetch();
+                    if ($result) {
+                        $stmt = $this->db->prepare($queryUpdate);
+                        if ($stmt->execute([':order_id' => $id_order])) {
+                            return $response->withJson(["code" => 200, "msg" => "Pesanan dibatalkan!"]);
+                        }
+                        return $response->withJson(["code" => 201, "msg" => "Pesanan gagal dibatalkan1!"]);
+                    }
+                    return $response->withJson(["code" => 201, "msg" => "Pesanan gagal dibatalkan!"]);
+                }
+                return $response->withJson(["code" => 201, "msg" => "Pesanan gagal dibatalkan!"]);
+            }
+            return $response->withJson(["code" => 201, "msg" => "Token atau id tidak ditemukan!"]);
+        }
+        return $response->withJson(["code" => 201, "msg" => "Token atau id tidak ditemukan!"]);
     });
 
 
@@ -625,24 +697,25 @@ return function (App $app) {
 
         $queryCheck = "SELECT * FROM tb_user WHERE `user_id` = :id AND token_login = :token ";
         $querySelectOrder = "SELECT
+                            tb_order.`status` as status_order,
+                            tb_order.end_date,
+                            tb_order.start_date,
+                            tb_order.order_date,
+                            tb_transaksi.harga,
+                            tb_order.jenis_order,
+                            tb_order.user_id,
+                            tb_order.order_id,
                             tb_mobil.nama,
                             tb_mobil.foto,
                             tb_mobil.tipe,
-                            tb_order.order_id,
-                            tb_order.user_id,
-                            tb_order.mobil_id,
-                            tb_order.harga,
-                            tb_order.start_date,
-                            tb_order.end_date,
-                            tb_order.order_date,
-                            tb_order.`status`,
-                            tb_order.finish_date,
-                            tb_order.metode_pembayaran,
-                            tb_order.jenis_order
+                            tb_transaksi.metode_pembayaran,
+                            tb_transaksi.`status`,
+                            tb_mobil.mobil_id
                             FROM
                             tb_order
+                            INNER JOIN tb_transaksi ON tb_order.order_id = tb_transaksi.order_id
                             INNER JOIN tb_mobil ON tb_order.mobil_id = tb_mobil.mobil_id
-                            WHERE tb_order.`user_id` = :id ORDER BY tb_order.order_date DESC";
+                            WHERE tb_order.`user_id` = :id AND tb_order.`status` <= 1 ORDER BY tb_order.order_date DESC";
 
 
         $stmt = $this->db->prepare($queryCheck);
